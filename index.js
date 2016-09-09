@@ -3,6 +3,7 @@ var downloader = require('s3-download-stream');
 var debug = require('debug')('s3-blob-store');
 var mime = require('mime-types');
 var through = require('through2');
+var BlockingWritable = require('./blocking-writable');
 
 function S3BlobStore(opts) {
   if (!(this instanceof S3BlobStore)) return new S3BlobStore(opts);
@@ -65,25 +66,20 @@ S3BlobStore.prototype.createWriteStream = function(opts, s3opts, done) {
     s3opts = {};
   }
   if (typeof opts === 'string') opts = {key: opts}
-  var params = this.uploadParams(opts)
+  var params = this.uploadParams(opts);
   var proxy = through();
-  proxy.pause();
+  var ws = new BlockingWritable(proxy);
 
   params.Body = proxy;
   // var s3opts = {partSize: 10 * 1024 * 1024, queueSize: 1};
   this.s3.upload(params, s3opts, function(err, data) {
-    if (err) {
-      debug('got err %j', err);
-      if (done) {
-        return done(err)
-      }
-      proxy.emit('error', err)
-    }
+    if (err) debug('got err %j', err);
+    else debug('uploaded %j', data);
+    if (done) done(err, { key: params.Key });
 
-    debug('uploaded %j', data);
-    done && done(null, { key: params.Key })
+    ws.unblock(err);
   });
-  return proxy;
+  return ws;
 }
 
 S3BlobStore.prototype.remove = function(opts, done) {
